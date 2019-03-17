@@ -63,12 +63,15 @@ class share extends Controller{
 		//密码检测
 		if ($shareInfo['sharePassword']=='') return;
 		if (!isset($this->in['password'])){
-			if ($_SESSION['password_'.$this->in['sid']]==$shareInfo['sharePassword']) return;
+			if ($_SESSION['password_'.$this->in['sid']]==$shareInfo['sharePassword']){
+				return;
+			}
 			$this->_error('password');
 		}else{
 			if ($this->in['password'] == $shareInfo['sharePassword']) {
 				session_start();
 				$_SESSION['password_'.$this->in['sid']]=$shareInfo['sharePassword'];
+				session_write_close();
 				show_json('success');
 			}else{
 				show_json(LNG('share_error_password'),false);
@@ -215,6 +218,7 @@ class share extends Controller{
 			'webHost'       => HOST,
 			'appHost'       => APP_HOST,
 			'staticPath'    => STATIC_PATH,
+			'appIndex'  	=> $_SERVER['SCRIPT_NAME'],
 			'version'       => KOD_VERSION,
 			'versionDesc'   => $versionDesc,
 			'kodID'			=> md5(BASIC_PATH.$this->config['settingSystem']['systemPassword']),
@@ -225,6 +229,7 @@ class share extends Controller{
 				'updloadChunkSize'	=> file_upload_size(),
 				'updloadThreads'	=> $this->config['settings']['updloadThreads'],
 				'updloadBindary'	=> $this->config['settings']['updloadBindary'],
+				'uploadCheckChunk'	=> $this->config['settings']['uploadCheckChunk'],
 				
 				'paramRewrite'	=> $this->config['settings']['paramRewrite'],
 				'pluginServer'	=> $this->config['settings']['pluginServer'],
@@ -240,7 +245,13 @@ class share extends Controller{
 			'KOD_USER_FAV'			=>	KOD_USER_FAV,
 			'KOD_GROUP_ROOT_SELF'	=>	KOD_GROUP_ROOT_SELF,
 			'KOD_GROUP_ROOT_ALL'	=>	KOD_GROUP_ROOT_ALL,
+			'ST'					=> $this->in['st'],
+			'ACT'					=> $this->in['act'],
 		);
+
+		if(ST.''.ACT == 'explorer.fileView'){
+			unset($theConfig['sharePage']);
+		}
 
 		$userConfig = $GLOBALS['config']['settingDefault'];
 		if(isset($this->in['user'])){
@@ -251,16 +262,21 @@ class share extends Controller{
 
 		if(isset($this->config['settingSystem']['versionHash'])){
 			$theConfig['versionHash'] = $this->config['settingSystem']['versionHash'];
+			$theConfig['versionHashUser'] = $this->config['settingSystem']['versionHashUser'];
 		}
 		$theConfig['userConfig'] = $userConfig;
 		$useTime = mtime() - $GLOBALS['config']['appStartTime'];
 
-		header("Content-Type: application/javascript");
+		header("Content-Type: application/javascript; charset=utf-8");
 		echo 'if(typeof(kodReady)=="undefined"){kodReady=[];}';
 		Hook::trigger('user.commonJs.insert',$this->in['st'],$this->in['act']);
-		echo 'AUTH=[];';
+		echo ';AUTH=[];';
 		echo 'G='.json_encode($theConfig).';';
-		echo 'LNG='.json_encode(I18n::getAll()).';G.useTime='.$useTime.';';
+		$lang = json_encode_force(I18n::getAll());
+		if(!$lang){
+			$lang = '{}';
+		}
+		echo 'LNG='.$lang.';G.useTime='.$useTime.';';
 	}
 
 
@@ -372,7 +388,7 @@ class share extends Controller{
 		$ext= trim($this->in['ext']);
 		$list = path_search(
 			$this->path,
-			iconv_system(rawurldecode($this->in['search'])),
+			rawurldecode($this->in['search']),
 			$isContent,$ext,$isCase);
 		
 		show_json(_DIR_OUT($list));
@@ -383,7 +399,7 @@ class share extends Controller{
 	public function fileUpload(){
 		$fileName = $_FILES['file']['name']? $_FILES['file']['name']:$GLOBALS['in']['name'];
 		$GLOBALS['isRoot']=0;
-		$GLOBALS['auth']['extNotAllow'] = "php|asp|jsp|html|htm|htaccess";
+		$GLOBALS['auth']['extNotAllow'] = "htm|html|php|phtml|pwml|asp|aspx|ascx|jsp|pl|htaccess|shtml|shtm|phtm";
 		if(!checkExt($fileName)){
 			show_json(LNG('no_permission_ext'),false);
 		}
@@ -411,7 +427,7 @@ class share extends Controller{
 	//代理输出
 	public function fileProxy(){
 		$mime = get_file_mime(get_path_ext($this->path));
-		if($mime == 'text/plain'){//文本则转编码
+		if($mime == 'text/plain' && is_file($this->path)){//文本则转编码
 			$fileContents = file_get_contents($this->path);
 			$charset=get_charset($fileContents);
 			if ($charset!='' || $charset!='utf-8') {
@@ -495,9 +511,8 @@ class share extends Controller{
 	public function fileGet(){
 		if(isset($this->in['fileUrl'])){ //http
 			$displayName = $this->in['name'];
-			$filepath = _DIR_CLEAR($this->in['fileUrl']);
-			$filepath = str_replace(':/','://',$filepath);
-			if(is_file($filepath) || substr($filepath,0,4) != 'http'){
+			$filepath = $this->in['fileUrl'];
+			if(!request_url_safe($filepath)){
 				show_json(LNG('url error!'),false);
 			}
 		}else{
@@ -524,45 +539,52 @@ class share extends Controller{
 		}
 		$data = array(
 			'ext'		=> get_path_ext($displayName),
-			'name'      => iconv_app(get_path_this($displayName)),
+			'name'		=> iconv_app(get_path_this($displayName)),
 			'filename'	=> $displayName,
 			'charset'	=> $charset,
-			'base64'	=> false,
-			'content'	=> $fileContents
-		);
-		if(!json_encode(array("data"=>$fileContents))){
-			$data['content'] = base64_encode($fileContents);
-			$data['base64']  = true;
-		}
+			'base64'	=> true,// 部分防火墙编辑文件误判问题处理
+			'content'	=> base64_encode($fileContents)
+		);		
 		show_json($data);
 	}
 	
 	public function image(){
-		if (filesize($this->path) <= 1024*50 ||
-			!function_exists('imagecolorallocate') ) {//小于50k或者不支持gd库 不再生成缩略图
-			file_put_out($this->path);
+		$thumbWidth = 250;
+		if(isset($this->in['thumbWidth'])){
+			$thumbWidth = intval($this->in['thumbWidth']);//自定义预览大图
+		}
+		if(substr($this->path,0,4) == 'http'){
+			header('Location: '.$this->in['path']);
+			exit;
+		}
+		if (@filesize($this->path) <= 1024*50 ||
+			!function_exists('imagecolorallocate') ||
+			get_path_ext($this->path) == 'gif') {//小于50k、不支持gd库、gif图 不再生成缩略图
+			file_put_out($this->path,false);
 			return;
 		}
-		$image = $this->path;
-		$image_md5  = @md5_file($image);//文件md5
-		if (strlen($image_md5)<5) {
-			$image_md5 = md5($image);
-		}
-		$imageThumb = DATA_THUMB.$image_md5.'.png';
 		if (!is_dir(DATA_THUMB)){
 			mk_dir(DATA_THUMB);
 		}
+		$image = $this->path;
+		$imageMd5  = @md5_file($image).'_'.$thumbWidth;//文件md5
+		if (strlen($imageMd5)<5) {
+			$imageMd5 = md5($image).'_'.$thumbWidth;
+		}
+		$imageThumb = DATA_THUMB.$imageMd5.'.png';
 		if (!file_exists($imageThumb)){//如果拼装成的url不存在则没有生成过
 			if (get_path_father($image)==DATA_THUMB){//当前目录则不生成缩略图
-				$imageThumb = $this->path;
+				$imageThumb=$this->path;
 			}else {
-				$cm=new ImageThumb($image,'file');
-				$cm->prorate($imageThumb,224,200);//生成等比例缩略图
+				$cm = new ImageThumb($image,'file');
+				$cm->prorate($imageThumb,$thumbWidth,$thumbWidth);//生成等比例缩略图
 			}
 		}
-		if (!file_exists($imageThumb) || filesize($imageThumb)<100){//缩略图生成失败则用默认图标
-			$imageThumb = $this->path;
+		if (!file_exists($imageThumb) || 
+			filesize($imageThumb)<100){//缩略图生成失败则使用原图
+			$imageThumb=$this->path;
 		}
+		file_put_out($imageThumb,false);
 		file_put_out($imageThumb);//输出
 	}
 

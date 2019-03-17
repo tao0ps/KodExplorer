@@ -105,6 +105,9 @@ Picasa.prototype = {
 	},
 	imageRotate:function(){
 	},
+	loadImageBefore:function(){
+	},
+
 
 	
 	// 窗口大小
@@ -436,7 +439,9 @@ Picasa.prototype = {
 		});
 		$('#PV_Btn_Open').die("click").bind('click',function(e){
 			try{
-				window.open($('#PV_Picture').attr('src'));
+				//var imageLink = $('#PV_Picture').attr('src');
+				var imageLink = myPicasa.arrItems[myPicasa.currentNo][4];
+				window.open(imageLink);
 			}catch(e){}
 		});
 
@@ -461,6 +466,7 @@ Picasa.prototype = {
 		this.doShowItem = setTimeout(function(){
 			self.fadeAction(1, self.fItems, self.itemsOpacity, 0);
 		}, 0);
+		
 	},
 
 	// 切换图片
@@ -476,7 +482,7 @@ Picasa.prototype = {
 
 		this.currentNo = No;
 		this.moveAction(true);
-		this.loadImage();		
+		this.loadImage();	
 	},
 	resetImage:function(image){
 		this.arrItems[this.currentNo][0][1] = image;
@@ -489,6 +495,7 @@ Picasa.prototype = {
 		$("#PV_Number").html((parseInt(this.currentNo)+1) + "/" +this.arrCount);
 		$('#PV_Items .current').removeClass('current');
 		$('#PV_Items [number='+this.currentNo+']').addClass('current');
+		this.loadImageBefore();
 
 		clearTimeout(this.doLoad);
 		var self = this;

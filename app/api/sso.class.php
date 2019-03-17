@@ -1,15 +1,21 @@
 <?php
-
-
-require_once(dirname(dirname(__FILE__)).'/function/web.function.php');
+/*
+* @link http://kodcloud.com/
+* @author warlee | e-mail:kodcloud@qq.com
+* @copyright warlee 2014.(Shanghai)Co.,Ltd
+* @license http://kodcloud.com/tools/license/license.txt
+*/
+if(!function_exists('get_client_ip')){
+    require_once(dirname(dirname(__FILE__)).'/function/web.function.php');
+}
 class SSO{
 	static private function init(){
 		$sessionName = 'KOD_SESSION_SSO';
 		$sessionID   = $_COOKIE[$sessionName]?$_COOKIE[$sessionName]:md5(uniqid());
 		$basicPath   = dirname(dirname(dirname(__FILE__))).'/';
 		$sessionPath = $basicPath.'data/session/';
-		if(file_exists($basicPath.'define.php')){
-			include($basicPath.'define.php');
+		if(file_exists($basicPath.'config/define.php')){
+			include($basicPath.'config/define.php');
 			$sessionPath = DATA_PATH.'session/';
 		}
 		if(!file_exists($sessionPath)){
@@ -34,7 +40,7 @@ class SSO{
 		@session_write_close();
 		unset($_SESSION);
 		@session_start();
-		if(!$_SESSION['kodSSO']){
+		if(!isset($_SESSION['kodSSO']) || !$_SESSION['kodSSO']){
 			@session_save_path($sessionSavePath);//session path
 			@session_start();
 			$_SESSION['kodSSO'] = true;
@@ -78,12 +84,16 @@ class SSO{
 			if(strstr($appUrl,'/plugins/')){
 				$kodHost = substr($appUrl,0,strpos($appUrl,'/plugins/'));
 			}else{
-				$kodHost = $_SERVER['HTTP_REFERER'];
-				if(strstr($kodHost,'/index.php?')){
-					$kodHost = substr($kodHost,0,strpos($kodHost,'/index.php?'));
-				}else if(strstr($kodHost,'/?')){
-					$kodHost = substr($kodHost,0,strpos($kodHost,'/?'));
-				}
+			    if(isset($_COOKIE['APP_HOST'])){
+			        $kodHost = $_COOKIE['APP_HOST'];
+			    }else{
+    			    $kodHost = $_SERVER['HTTP_REFERER'];
+    				if(strstr($kodHost,'/index.php?')){
+    					$kodHost = substr($kodHost,0,strpos($kodHost,'/index.php?'));
+    				}else if(strstr($kodHost,'/?')){
+    					$kodHost = substr($kodHost,0,strpos($kodHost,'/?'));
+    				}
+			    }
 			}
 		}
 		$authUrl = rtrim($kodHost,'/').'/index.php?user/sso&app='.$appKey.'&'.$auth;
@@ -97,5 +107,3 @@ class SSO{
 		}
 	}
 }
-
-

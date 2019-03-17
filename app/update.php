@@ -25,7 +25,9 @@ function updateCheck(){
 	if(!file_exists(THE_DATA_PATH.'system/install.lock')){
 		if(UPDATE_DEV){
 			echo 'not install!';exit;
-		}else{
+		}
+		//从2.x 升级
+		if( !file_exists(THE_DATA_PATH.'system/member.php') ){
 			return;
 		}
 	}
@@ -34,7 +36,8 @@ function updateCheck(){
 	//from <=3.23 to 3.30
 	if( file_exists(THE_DATA_PATH.'system/member.php') && 
 		!file_exists(THE_DATA_PATH.'system/system_member.php')){
-		new UpdateToV330();
+		new updateToV330();
+		new Update3To400();
 	}
 
 	//from [3.30~3.36] //还原用户目录
@@ -80,9 +83,22 @@ function updateClear(){
 	del_dir(THE_DATA_PATH.'session');
 	mk_dir(THE_DATA_PATH.'session');
 	mk_dir(THE_DATA_PATH.'temp/thumb');
-	
+
 	updateApps();
 	updateSystemSetting();
+	check_version_ok();
+	@del_file(BASIC_PATH.'app/controller/util.php');
+	@del_file(BASIC_PATH.'README.md');
+}
+function check_version_ok(){
+	//检查是否更新失效
+	$content = file_get_contents(BASIC_PATH.'config/version.php');
+	$result  = match($content,"'KOD_VERSION','(.*)'");
+	if($result != KOD_VERSION){
+		show_tips("您服务器开启了php缓存,文件更新尚未生效;
+			请关闭缓存，或稍后1分钟刷新页面再试！
+			<a href='http://www.tuicool.com/articles/QVjeu2i' target='_blank'>了解详情</a>");
+	}
 }
 
 //APP更新覆盖
@@ -217,6 +233,17 @@ class Update3To400{
 		}
 	}
 	function initUser($userPath){
+		$checkFile = array(
+			$userPath.'config.php',
+			$userPath.'fav.php',
+			$userPath.'share.php'
+		);
+		foreach ($checkFile as $item) {
+			if(file_exists($item) && filesize($item) == 0 ){
+				@unlink($item);
+			}
+		}
+
 		$this->parseFile($userPath.'config.php');
 		$this->parseFile($userPath.'editor_config.php');
 		$this->parseFile($userPath.'share.php',true);
@@ -370,12 +397,12 @@ class updateToV330{
 				"guest" => array(
 					"role" => "guest",
 					"name" => "guest",
-					"ext_not_allow" => "php|asp|jsp|html|htm|htaccess"
+					"ext_not_allow" => "htm|html|php|phtml|pwml|asp|aspx|ascx|jsp|pl|htaccess|shtml|shtm|phtm"
 				),
 				"default" => array(
 					"role" => "default",
 					"name" => "default",
-					"ext_not_allow" => "php|asp|jsp|html|htm|htaccess",
+					"ext_not_allow" => "htm|html|php|phtml|pwml|asp|aspx|ascx|jsp|pl|htaccess|shtml|shtm|phtm",
 					"explorer:mkdir" => 1,
 					"explorer:mkfile" => 1,
 					"explorer:pathDelete" => 1,
@@ -445,6 +472,18 @@ class updateToV330{
 			mk_dir($user_path.'home/desktop');
 			mk_dir($user_path.'home/document');
 			mk_dir($user_path.'home/pictures');
+		}
+
+		$userPath = $user_path.'data/';
+		$checkFile = array(
+			$userPath.'config.php',
+			$userPath.'fav.php',
+			$userPath.'share.php'
+		);
+		foreach ($checkFile as $item) {
+			if(file_exists($item) && filesize($item) == 0 ){
+				@unlink($item);
+			}
 		}
 		mk_dir($user_path.'recycle');
 		if(!is_array($data) || count($data)<4){

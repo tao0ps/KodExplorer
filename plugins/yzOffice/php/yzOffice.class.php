@@ -1,5 +1,10 @@
 <?php
-
+/*
+* @link http://kodcloud.com/
+* @author warlee | e-mail:kodcloud@qq.com
+* @copyright warlee 2014.(Shanghai)Co.,Ltd
+* @license http://kodcloud.com/tools/license/license.txt
+*/
 // 文档分享预览
 // http://yozodoc.com/
 class yzOffice{
@@ -104,8 +109,6 @@ class yzOffice{
 		$mode = $config['preview'];
 		if(in_array($ext,array("xls","xlsb","xlsx","xlt","xlsm","csv"))){
 			$mode = '1';//excle不支持高清模式，自动切换
-		}else if(in_array($ext,array("ppt","pptx","pptm","pps","ppsx"))){
-			$mode = '0';//ppt默认采用高清模式
 		}
 		return $mode;
 	}
@@ -124,7 +127,9 @@ class yzOffice{
 		}
 		return false;
 	}
-
+	public function convert(){
+		del_dir($this->cachePath);
+	}
 	public function clearChche(){
 		del_dir($this->cachePath);
 	}
@@ -134,7 +139,7 @@ class yzOffice{
 	}
 	public function getFile($file){
 		ignore_timeout();
-		$ext = get_path_ext($file);
+		$ext = unzip_filter_ext(get_path_ext($file));
 		$cacheFile = $this->cachePath.md5($file.'file').'.'.$ext;
 		if(file_exists($cacheFile)){
 			file_put_out($cacheFile,false);

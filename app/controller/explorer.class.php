@@ -14,22 +14,25 @@ class explorer extends Controller{
 		$this->user = $_SESSION['kodUser'];
 		if (isset($this->in['path'])) {
 			//游客访问别人zip，解压到**目录；入口不检测权限
-			$pathNotCheck = array("explorer.unzip");
-			$pathNotCheckFlag = in_array(ST.'.'.ACT,$pathNotCheck);
-			if($pathNotCheckFlag){
+			if( ST.'.'.ACT == "explorer.unzip" ){
+				if($this->in['pathTo']){
+					_DIR($this->in['pathTo']);
+				}else{
+					_DIR($this->in['path']);
+				}
+				$GLOBALS['kodPathAuthCheck'] = true;
+			}
+			if( ST.'.'.ACT == "explorer.unzipList" ){
 				$GLOBALS['kodPathAuthCheck'] = true;
 			}
 			$this->path = _DIR($this->in['path']);
-			if($pathNotCheckFlag){
-				$GLOBALS['kodPathAuthCheck'] = false;
-			}
 			$this->_checkSystemPath();
 		}
 	}
 	public function index(){
 		$dir = '';
 		if(isset($this->in['path']) && $this->in['path'] !=''){
-			$dir = _DIR_CLEAR($_GET['path']);
+			$dir = _DIR_CLEAR($this->in['path']);
 			$dir = rtrim($dir,'/').'/';
 		}
 		$this->assign('dir',$dir);
@@ -77,9 +80,13 @@ class explorer extends Controller{
 		if (count($infoList)==1 && $infoList[0]['type']!='folder') {//单个文件
 			$file = $infoList[0]['path'];
 			if( $GLOBALS['isRoot'] || 
-				$GLOBALS['auth']["explorer.fileDownloa"]==1 ||
+				$GLOBALS['auth']["explorer.fileDownload"]==1 ||
 				isset($this->in['viewPage'])){
 				$data['downloadPath'] = _make_file_proxy($file);
+			}
+			//所在部门，下载权限检测
+			if($GLOBALS['kodPathRoleGroupAuth'] && !$GLOBALS['kodPathRoleGroupAuth']['explorer.fileDownload']){
+				unset($data['downloadPath']);
 			}
 			if($data['size'] < 100*1024|| isset($this->in['getMd5'])){//100kb
 				$data['fileMd5'] = @md5_file($file);
@@ -130,6 +137,10 @@ class explorer extends Controller{
 			$repeatType = $this->in['repeat_type'];
 		}
 		$new= rtrim($this->path,'/');
+		$parent = get_path_father($this->path);
+		if(!file_exists($parent)){
+			mk_dir($parent);
+		}
 		$new = get_filename_auto($new,'',$repeatType);//已存在处理 创建副本
 		Hook::trigger("explorer.mkfileBefore",$new);
 		if(@touch($new)){
@@ -149,6 +160,7 @@ class explorer extends Controller{
 			show_json(LNG('create_error'),false);
 		}
 	}
+
 	public function mkdir(){
 		$repeatType = 'skip';
 		if(isset($this->in['repeat_type'])){
@@ -156,19 +168,34 @@ class explorer extends Controller{
 		}
 		$new = rtrim($this->path,'/');
 		$new = get_filename_auto($new,'',$repeatType);//已存在处理 创建副本
-		Hook::trigger("explorer.mkdirBefore",$new);
-		if(mk_dir($new,DEFAULT_PERRMISSIONS)){
-			chmod_path($new,DEFAULT_PERRMISSIONS);
-			Hook::trigger("explorer.mkdirAfter",$new);
+		if($this->_mkdir($new)){
 			show_json(LNG('create_success'),true,_DIR_OUT(iconv_app($new)) );
 		}else{
 			show_json(LNG('create_error'),false);
 		}
 	}
 
+	private function _mkdir($path){
+		if(!$GLOBALS['isRoot']){
+			//IIS6 解析漏洞  /a.php/2.jpg 得到解析
+			$temp = str_replace('\\','/',$path);
+			if(substr(rtrim($temp,'/'),-4) == '.php'){
+				show_json(LNG('no_permission_ext'),false);
+			}
+		}
+		Hook::trigger("explorer.mkdirBefore",$path);
+		if(mk_dir($path,DEFAULT_PERRMISSIONS)){
+			chmod_path($path,DEFAULT_PERRMISSIONS);
+			Hook::trigger("explorer.mkdirAfter",$path);
+			return true;
+		}
+		return false;
+	}
+
 	public function pathRname(){
 		$rnameTo=_DIR($this->in['rnameTo']);
-		if (file_exists_case($rnameTo)) {
+		if (file_exists($rnameTo) && 
+			strtolower($rnameTo) !== strtolower($this->path) ) {
 			show_json(LNG('name_isexists'),false);
 		}
 		Hook::trigger("explorer.pathRnameBefore",$this->path,$rnameTo);
@@ -197,7 +224,7 @@ class explorer extends Controller{
 		Hook::trigger("explorer.searchBefore",$this->path);
 		$list = path_search(
 			$this->path,
-			iconv_system(rawurldecode($this->in['search'])),
+			rawurldecode($this->in['search']),
 			$isContent,$ext,$isCase);
 		show_json(_DIR_OUT($list));
 	}
@@ -273,22 +300,21 @@ class explorer extends Controller{
 		}
 	}
 
-	//用户根目录
+	//部门根目录
 	private function _selfGroupLoad(&$root){
 		foreach ($root as $key => $value) {
-			if($value['name'] == 'share'){
+			if($value['name'] == $GLOBALS['config']['settingSystem']['groupShareFolder']){
 				$root[$key] = array(
-					'name'		=> LNG('group_share'),
-					'menuType'  => "menu-folder folder-box",
-					'ext' 		=> "folder-share",
-					'isParent'	=> true,
+					'name'			=> LNG('group_share'),
+					'menuType'  	=> "menu-folder folder-box",
+					'ext' 			=> "folder-share",
 					'isReadable'	=> true,
 					'isWriteable'	=> true,
 
-					'path' 		=> KOD_GROUP_PATH.':'.$GLOBALS['kodPathId'].'/share/',
-					'type'      => 'folder',
-					'open'      => false,
-					'isParent'  => false
+					'path' 			=> $value['path'],
+					'type'      	=> 'folder',
+					'open'      	=> false,
+					'isParent'  	=> $value['isParent']
 				);
 				break;
 			}
@@ -392,7 +418,6 @@ class explorer extends Controller{
 					'isParent'  => count($project)>0?true:false)
 			);
 			show_json($treeData);
-			return;
 		}
 		$checkFile = ($app == 'editor'?true:false);
 		$fav = $this->_treeFav($app);
@@ -446,7 +471,7 @@ class explorer extends Controller{
 
 			'public'=>array(
 				'name'		=> $groupRootName,
-				'menuType'  => "menu-tree-group-root",
+				'menuType'  => "menu-tree-group-root menu-tree-group-public",
 				'ext' 		=> "group-public",
 				'children'  => $public,
 
@@ -480,7 +505,7 @@ class explorer extends Controller{
 		);
 
 		//编辑器简化树目录
-		if($app == 'editor'){
+		if($app == 'editor' || defined("KODFILE")){
 			unset($treeData['myGroup']);
 			unset($treeData['group']);
 			unset($treeData['public']);
@@ -489,7 +514,7 @@ class explorer extends Controller{
 				$listWeb  = $this->_path(_DIR(WEB_ROOT),$checkFile,true);
 				$web = array_merge($listWeb['folderList'],$listWeb['fileList']);
 				$treeData['webroot'] = array(
-					'name'      => "webroot",
+					'name'      => get_path_this(WEB_ROOT),
 					'menuType'  => "menu-tree-root",
 					'ext' 		=> "folder",
 					'children'  => $web,
@@ -514,6 +539,13 @@ class explorer extends Controller{
 		show_json($result);
 	}
 
+	private function _rootListGroup(){
+		return $this->config['settingSystem']['rootListGroup'] == 1;
+	}
+	private function _rootListUser(){
+		return $this->config['settingSystem']['rootListUser'] == 1;
+	}
+
 	//session记录用户可以管理的组织；继承关系
 	private function _groupTree($nodeId){//获取组织架构的用户和子组织；为空则获取根目录
 		$groupSql = systemGroup::loadData();
@@ -521,11 +553,11 @@ class explorer extends Controller{
 		$groupList = $this->_makeNodeList($groups);
 
 		//根群组不显示子群组
-		if( $nodeId == '1' && !$this->config['settingSystem']['rootListGroup']){
+		if( $nodeId == '1' && !$this->_rootListGroup() ){
 			$groupList = array();
 		}
 		//根群组不显示用户
-		if( $nodeId == '1' &&  !$this->config['settingSystem']['rootListUser']){
+		if( $nodeId == '1' || !$this->_rootListUser() ){
 			return $groupList;
 		}
 
@@ -570,15 +602,19 @@ class explorer extends Controller{
 		foreach($list as $key => $val){
 			$groupPath = KOD_GROUP_PATH;
 			$auth = systemMember::userAuthGroup($val['groupID']);
+			$menuGroup = 'menu-tree-group';
 			if($auth==false){//是否为该组内部成员
 				$groupPath = KOD_GROUP_SHARE;
 				$treeIcon = 'group-guest';
 			}else{
 				$treeIcon = 'group-self';
+				$menuGroup .= " menu-tree-group-self";
 			}
 			$hasChildren = true;
-			$userList = systemMember::userAtGroup($val['groupID']);
-
+			$userList = array();
+			if( $this->_rootListUser() ){
+				$userList = systemMember::userAtGroup($val['groupID']);
+			}
 			if(count($userList)==0 && $val['children']==''){
 				$hasChildren = false;
 			}
@@ -589,7 +625,7 @@ class explorer extends Controller{
 				'ext' 		=> $treeIcon,
 				'tree_icon'	=> $treeIcon,//request
 
-				'menuType'  => "menu-tree-group",
+				'menuType'  => $menuGroup,
 				'isParent'  => $hasChildren
 			);
 		}
@@ -615,6 +651,8 @@ class explorer extends Controller{
 				continue;
 			}
 			$pathThis = _DIR($val['path']);
+			$GLOBALS['beforePathType'] = $GLOBALS['kodPathType'];
+			$GLOBALS['kodBeforePathId']= $GLOBALS['kodPathId'];
 			//不是自己目录的分享列表，不支持删除
 			if( $GLOBALS['kodPathType'] == KOD_USER_SHARE &&
 				$GLOBALS['kodPathId']   != $_SESSION['kodUser']['userID'] &&
@@ -625,11 +663,8 @@ class explorer extends Controller{
 				$error++;
 				continue;
 			}
-			//show_json($pathThis,false,file_exists($pathThis));
 
 			// 群组文件删除，移动到个人回收站。
-			// $GLOBALS['kodPathType'] == KOD_GROUP_SHARE ||
-			// $GLOBALS['kodPathType'] == KOD_GROUP_PATH  ||
 			if( $removeToRecycle !="1"  ||
 				$GLOBALS['kodPathType'] == KOD_USER_RECYCLE ){//回收站删除 or 共享删除等直接删除
 				Hook::trigger("explorer.pathRemoveBefore",$pathThis);
@@ -642,17 +677,22 @@ class explorer extends Controller{
 				}
 				Hook::trigger("explorer.pathRemoveAfter",$pathThis);
 			}else{
-				$filename = $userRecycle.get_path_this($pathThis);
-				$filename = get_filename_auto($filename,date('_H-i-s'),'folder_rename');//已存在则追加时间
-				if (move_path($pathThis,$filename,'',$this->config['user']['fileRepeat'])) {
+				//重置pathType等数据
+				$GLOBALS['beforePathType'] = KOD_USER_SHARE;
+				$GLOBALS['kodBeforePathId']= $_SESSION['kodUser']['userID'];
+
+				$autoPath = $userRecycle.get_path_this($pathThis);
+				$autoPath = get_filename_auto($autoPath,date('_H-i-s'),'folder_rename');//已存在则追加时间
+				if (move_path($pathThis,$autoPath,'',$this->config['user']['fileRepeat'])) {
 					$success++;
+					Hook::trigger("explorer.pathMoveAfter",$pathThis,$autoPath);
 				}else{
 					$error++;
 				}
 			}
 		}
 		$state = $error==0?true:false;
-		$info = $success.' success,'.$error.' error';
+		$info = $success.' '.LNG('success').', '.$error.' '.LNG('error');
 		if ($error==0) {
 			$info = LNG('remove_success');
 		}
@@ -662,7 +702,6 @@ class explorer extends Controller{
 	private function _clearTemp(){
 		$path = iconv_system(USER_TEMP);
 		$time = @filemtime($path);
-		Hook::trigger("explorer.pathRemoveAfter",$path);
 		if(time() - $time > 600){//10min without updload
 			del_dir($path);
 			mk_dir($path);
@@ -672,7 +711,9 @@ class explorer extends Controller{
 	public function pathDeleteRecycle(){
 		$userRecycle = iconv_system(USER_RECYCLE);
 		if(!isset($this->in['dataArr'])){
+			Hook::trigger("explorer.pathRemoveBefore",$userRecycle);
 			if (!del_dir($userRecycle)) {
+				Hook::trigger("explorer.pathRemoveAfter",$userRecycle);
 				show_json(LNG('remove_fali'),false);
 			}else{
 				mkdir($userRecycle);
@@ -734,7 +775,7 @@ class explorer extends Controller{
 		$success=0;$error=0;$data = array();
 		foreach ($clipboard as $val) {
 			$pathCopy = _DIR($val['path']);
-			$filename  = get_path_this($pathCopy);
+			$filename = get_path_this($pathCopy);
 			$autoPath = get_filename_auto($pathPast.$filename,'',$this->config['user']['fileRepeat']);
 
 			Hook::trigger("explorer.pathMoveBefore",$pathCopy,$autoPath);
@@ -764,18 +805,18 @@ class explorer extends Controller{
 		$success=0;$error=0;$data = array();
 		foreach ($clipboard as $val) {
 			$pathCopy = _DIR($val['path']);
+			_DIR($this->in['path']);//重置pathType等数据
 			$filename = get_path_this($pathCopy);
 			$autoPath = get_filename_auto($pathPast.$filename,'',$this->config['user']['fileRepeat']);
-
 			if ($this->in['filename_auto']==1 &&
 				trim($autoPath,'/') == trim($pathCopy,'/')) {
 				$autoPath = get_filename_auto($pathPast.$filename,'','folder_rename');				
 			}
 
-			Hook::trigger("explorer.pathMoveBefore",$pathCopy,$autoPath);
+			Hook::trigger("explorer.pathCopyBefore",$pathCopy,$autoPath);
 			if(copy_dir($pathCopy,$autoPath)){
 				$success++;
-				Hook::trigger("explorer.pathMoveAfter",$filename);
+				Hook::trigger("explorer.pathCopyAfter",$autoPath);
 				$data[] = _DIR_OUT(iconv_app($autoPath));
 			}else{
 				$error++;
@@ -830,8 +871,12 @@ class explorer extends Controller{
 			show_json(LNG('clipboard_null'),false,$data);
 		}
 		for ($i=0; $i < $listNum; $i++) {
-			$pathCopy = _DIR($clipboard[$i]['path']);
-			_DIR($this->in['path']);//重置pathType等数据
+			$pathCopy = _DIR($clipboard[$i]['path']);			
+			//重置pathType等数据;从回收站剪切出来不处理
+			if($copyType == 'cute' && $GLOBALS['kodPathType'] == KOD_USER_RECYCLE){
+			}else{
+				_DIR($this->in['path']);//重置pathType等数据
+			}
 			$filename  = get_path_this($pathCopy);
 			$filenameOut  = iconv_app($filename);
 			if (!file_exists($pathCopy)){
@@ -845,11 +890,14 @@ class explorer extends Controller{
 				}
 			}
 			$autoPath = get_filename_auto($pathPast.$filename,'',$this->config['user']['fileRepeat']);
+			if($pathCopy == $autoPath){
+				continue;//复制粘贴到原始位置
+			}
 			$filename = get_path_this($autoPath);
 			if ($copyType == 'copy') {
 				Hook::trigger("explorer.pathCopyBefore",$pathCopy,$autoPath);
 				copy_dir($pathCopy,$autoPath);
-				Hook::trigger("explorer.pathCopyAfter",$filename);
+				Hook::trigger("explorer.pathCopyAfter",$autoPath);
 			}else{
 				Hook::trigger("explorer.pathMoveBefore",$pathCopy,$autoPath);
 				move_path($pathCopy,$autoPath,'',$this->config['user']['fileRepeat']);
@@ -869,14 +917,11 @@ class explorer extends Controller{
 		file_put_out($this->path,true);
 	}
 	//文件下载后删除,用于文件夹下载
-	public function fileDownloadRemove(){
+	public function fileDownloadRemove(){ 
 		$path = get_path_this(_DIR_CLEAR($this->in['path']));
 		$path = iconv_system(USER_TEMP.$path);
-		file_put_out($path,true);
-		
-		Hook::trigger("explorer.pathRemoveBefore",$path,false);
-		del_file($path);
-		Hook::trigger("explorer.pathRemoveAfter",$path);
+		$fileName = substr(get_path_this($path),10);//前10个字符为随机前缀
+		file_put_out($path,true,$fileName);
 	}
 	public function zipDownload(){
 		$userTemp = iconv_system(USER_TEMP);
@@ -884,20 +929,21 @@ class explorer extends Controller{
 			mkdir($userTemp);
 		}else{//清除未删除的临时文件，一天前
 			$list = path_list($userTemp,true,false);
-			$maxTime = 3600*24;//自动清空一天前的缓存
+			$maxTime = 3600*6;//自动清空一天前的缓存
 			if ($list['fileList']>=1) {
 				for ($i=0; $i < count($list['fileList']); $i++) {
-					$createTime = $list['fileList'][$i]['mtime'];//最后修改时间
+					$item = $list['fileList'][$i];
+					$createTime = $item['mtime'];//最后修改时间
 					if(time() - $createTime >$maxTime){
-						del_file($list['fileList'][$i]['path'].$list['fileList'][$i]['name']);
+						del_file($item['path'].$item['name']);
 					}
 				}
 			}
 		}
-		$zipFile = $this->zip($userTemp);
+		$zipFile = $this->zip($userTemp,rand_string(9).'-',fasle);//下载文件夹删除；不检测和记录空间变更
 		show_json(LNG('zip_success'),true,get_path_this($zipFile));
 	}
-	public function zip($zipPath=''){
+	public function zip($zipPath='',$namePre = "",$checkSpaceChange = true){
 		ignore_timeout();
 		$zipList = json_decode($this->in['dataArr'],true);
 		$listNum = count($zipList);
@@ -932,18 +978,20 @@ class explorer extends Controller{
 		}else{
 			$pathThisName=get_path_this(get_path_father($files[0]));
 		}
-		$zipname = $basicPath.$pathThisName.'.'.$fileType;
-		$zipname = get_filename_auto($zipname,'',$this->config['user']['fileRepeat']);
+		$zipname = $basicPath.$namePre.$pathThisName.'.'.$fileType;
+		$zipname = get_filename_auto($zipname,'','rename');//已存在重命名
 
-		Hook::trigger("explorer.zipBefore",$zipname);
+		if($checkSpaceChange){Hook::trigger("explorer.zipBefore",$zipname);}
 		$result = KodArchive::create($zipname,$files);
-		Hook::trigger("explorer.zipAfter",$zipname);
-		if ($result == 0) {
-			show_json("Create error!",false);
-		}
-		$info = LNG('zip_success').LNG('size').":".size_format(filesize($zipname));
+		if($checkSpaceChange){Hook::trigger("explorer.zipAfter",$zipname);}
+
 		if ($zipPath=='') {
-			show_json($info,true,_DIR_OUT(iconv_app($zipname)) );
+			if(file_exists($zipname)){
+				$info = LNG('zip_success').LNG('size').":".size_format(filesize($zipname));
+				show_json($info,true,_DIR_OUT(iconv_app($zipname)) );
+			}else{
+				show_json(LNG.error,false);
+			}
 		}else{
 			return iconv_app($zipname);
 		}
@@ -951,6 +999,9 @@ class explorer extends Controller{
 	public function unzip(){
 		ignore_timeout();
 		$path = $this->path;
+		if(!file_exists($path)){
+			show_json(LNG("not_exists"),false);
+		}
 		$name = get_path_this($path);
 		$name = substr($name,0,strrpos($name,'.'));
 		$ext  = get_path_ext($path);
@@ -964,9 +1015,8 @@ class explorer extends Controller{
 			$unzipToAdd = $name;
 		}
 
-		//所在目录不可写
-		mk_dir($unzipTo);
-		if (!path_writeable($unzipTo)){
+		$this->_mkdir($unzipTo);
+		if (!path_writeable($unzipTo)){//所在目录不可写
 			show_json(LNG('no_permission_write'),false);
 		}
 		$unzipTo = $unzipTo.$unzipToAdd;
@@ -1007,8 +1057,17 @@ class explorer extends Controller{
 	}
 	//缩略图
 	public function image(){
-		if (filesize($this->path) <= 1024*50 ||
-			!function_exists('imagecolorallocate') ) {//小于50k或者不支持gd库 不再生成缩略图
+		$thumbWidth = 250;
+		if(isset($this->in['thumbWidth'])){
+			$thumbWidth = intval($this->in['thumbWidth']);//自定义预览大图
+		}
+		if(substr($this->path,0,4) == 'http'){
+			header('Location: '.$this->in['path']);
+			exit;
+		}
+		if (@filesize($this->path) <= 1024*50 ||
+			!function_exists('imagecolorallocate') ||
+			get_path_ext($this->path) == 'gif') {//小于50k、不支持gd库、gif图 不再生成缩略图
 			file_put_out($this->path,false);
 			return;
 		}
@@ -1016,9 +1075,9 @@ class explorer extends Controller{
 			mk_dir(DATA_THUMB);
 		}
 		$image = $this->path;
-		$imageMd5  = @md5_file($image);//文件md5
+		$imageMd5  = @md5_file($image).'_'.$thumbWidth;//文件md5
 		if (strlen($imageMd5)<5) {
-			$imageMd5 = md5($image);
+			$imageMd5 = md5($image).'_'.$thumbWidth;
 		}
 		$imageThumb = DATA_THUMB.$imageMd5.'.png';
 		if (!file_exists($imageThumb)){//如果拼装成的url不存在则没有生成过
@@ -1026,7 +1085,7 @@ class explorer extends Controller{
 				$imageThumb=$this->path;
 			}else {
 				$cm = new ImageThumb($image,'file');
-				$cm->prorate($imageThumb,250,250);//生成等比例缩略图
+				$cm->prorate($imageThumb,$thumbWidth,$thumbWidth);//生成等比例缩略图
 			}
 		}
 		if (!file_exists($imageThumb) || 
@@ -1063,7 +1122,7 @@ class explorer extends Controller{
 		}
 		//下载
 		$savePath = _DIR(rawurldecode($this->in['savePath']));
-		mk_dir($savePath);
+		$this->_mkdir($savePath);
 		if (!$savePath || !path_writeable($savePath)){
 			show_json(LNG('no_permission_write'),false);
 		}
@@ -1078,7 +1137,7 @@ class explorer extends Controller{
 			$filename = $header['name'];
 		}
 
-		$saveFile = $savePath.$filename;
+		$saveFile = $savePath._DIR_CLEAR($filename);
 		if (!checkExt($saveFile)){//不允许的扩展名
 			$saveFile = $savePath.date('h:i:s').'.dat';
 		}
@@ -1111,6 +1170,11 @@ class explorer extends Controller{
 	//通用预览
 	public function fileView(){
 		Hook::trigger("explorer.fileViewStart",$this->path);
+		if(!isset($this->in['path'])){
+			show_tips('参数错误!');
+		}
+		$this->tpl = TEMPLATE.'api/';
+		$this->display('view.html');
 	}
 	//通用保存
 	public function fileSave(){
@@ -1136,9 +1200,11 @@ class explorer extends Controller{
 			$fullPath = _DIR_CLEAR(rawurldecode($this->in['fullPath']));
 			$fullPath = get_path_father($fullPath);
 			$fullPath = iconv_system($fullPath);
-			if (mk_dir($savePath.$fullPath)) {
-				$savePath = $savePath.$fullPath;
-			}
+			$savePath = $savePath.$fullPath;
+			mk_dir($savePath);
+			// if ($this->_mkdir($savePath.$fullPath)) {
+			// 	$savePath = $savePath.$fullPath;
+			// }
 		}
 		//分片上传
 		$repeatAction = $this->config['user']['fileRepeat'];
@@ -1151,7 +1217,12 @@ class explorer extends Controller{
 	//分享根目录
 	private function _pathShare(&$list){
 		$arr = explode(',',$GLOBALS['kodPathId']);
-		$shareList = systemMember::userShareList($arr[0]);
+		
+		//不展示用户时;屏蔽获取其他人分享列表
+		if( $arr[0] != $_SESSION['kodUser']['userID'] && !$this->_rootListUser()){
+			return;
+		}
+		$shareList = systemMember::userShareList($arr[0]);	
 		$beforeShareId = $GLOBALS['kodPathIdShare'];
 		foreach ($shareList as $key => $value) {
 			$thePath = _DIR(KOD_USER_SHARE.':'.$arr[0].'/'.$value['name']);
@@ -1162,10 +1233,12 @@ class explorer extends Controller{
 			$value['exists'] = intval(file_exists($thePath));
 			$value['metaInfo'] = 'path-self-share';
 			$value['menuType']  = "menu-share-path";
-			$value['aa'] = $thePath;
+			if(is_file($thePath)){
+				$value['size']  = get_filesize($thePath);;
+			}
 
 			//分享列表oexe
-			if(get_path_ext($value['name']) == 'oexe'){
+			if(get_path_ext($value['name']) == 'oexe' && is_file($thePath) ){
 				$json = json_decode(@file_get_contents($thePath),true);
 				if(is_array($json)) $value = array_merge($value,$json);
 			}
@@ -1225,7 +1298,7 @@ class explorer extends Controller{
 			}
 
 			//分享列表oexe
-			if(get_path_ext($val['name']) == 'oexe'){
+			if(get_path_ext($val['name']) == 'oexe' && is_file($thePath)){
 				$json = json_decode(@file_get_contents($thePath),true);
 				if(is_array($json)) $val = array_merge($val,$json);
 			}

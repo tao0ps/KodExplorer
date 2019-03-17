@@ -22,6 +22,7 @@ class I18n{
 		$lang  = "en";
 		$arr   = $GLOBALS['config']['settingAll']['language'];
 		$langs = array();
+		if(!$arr) return 'zh-CN';
 		foreach ($arr as $key => $value) {
 			$langs[$key] = $key;
 		}
@@ -69,7 +70,7 @@ class I18n{
 			$lang = $_COOKIE[$cookieLang];
 		}else{
 			$lang = self::defaultLang();
-			setcookie_header($cookieLang,$lang, time()+3600*24*100);
+			//setcookie_header($cookieLang,$lang, time()+3600*24*100);
 		}
 
 		$lang = str_replace(array('/','\\','..','.'),'',$lang);
